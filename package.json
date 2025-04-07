@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "nodemon index.js"
+    "start": "node index.js"
   },
   "keywords": [],
   "author": "",
@@ -12,7 +12,6 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "grammy": "^1.33.0",
-    "nodemon": "^3.1.9",
     "xlsx": "^0.18.5"
   }
 }
