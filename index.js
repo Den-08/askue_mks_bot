@@ -1,11 +1,11 @@
 // Описание функций
 // функция обработки серийного номера
 function normSN(sn) {
-  if (isNaN(Number(sn))) return sn
+  if (isNaN(Number(sn))) return sn.toUpperCase()
   else return Number(sn)
 }
 
-// функция поиска по XLSX
+// функция поиска по XLSX РОЛ
 function oprosXLSX(puNumber, workbook) {
   result = [];
   // константы и переменные для Листа №1
@@ -53,43 +53,39 @@ function oprosXLSX(puNumber, workbook) {
   return result  //массив объектов
 }
 
-// функция вывода в сообщение в формате с == разделителями
+// функция вывода из РОЛ в сообщение в формате с == разделителями
 async function sendToMessage(ctx, mesResult_i, uspdr_try) {
-  if (mesResult_i.odate === ' ') {
-    await ctx.reply(`${mesResult_i.sn} == не опрос
-== ${mesResult_i.ptype} == ${mesResult_i.svnum} == ${mesResult_i.login} == ${mesResult_i.route} == ${mesResult_i.uspdn} == ${uspdr_try}`)
+  let mesResult_text = '';
+    for (const key in mesResult_i) {
+      if ((key !== 'sn') & (key !== 'odate')) mesResult_text += `== ${mesResult_i[key]} `
+    }
+  if (mesResult_i.odate === ' ') await ctx.reply(`${mesResult_i.sn} == не опрос` + "\n" + mesResult_text)  
+  else await ctx.reply(`${mesResult_i.sn} == опрос ${mesResult_i.odate}` + "\n" + mesResult_text)  
+}
+
+// функция поиска в РОЛ и вывода информации по серийному номеру ПУ
+let getInfoBySN = async (ctx, json_key = false) => {
+  let textOrMatch = null;
+  if (ctx.match) { textOrMatch = ctx.match } else { textOrMatch = ctx.message.text }
+  let mesResult = oprosXLSX(textOrMatch, workbook);
+  let uspdr_try = "";
+  // начало вывода результата в ответное сообщение
+  if (mesResult.length == 0) {
+    await ctx.reply(`${textOrMatch} == не найден в РОЛ`)
   }
   else {
-    await ctx.reply(`${mesResult_i.sn} == опрос ${mesResult_i.odate}
-== ${mesResult_i.ptype} == ${mesResult_i.svnum} == ${mesResult_i.login} == ${mesResult_i.route} == ${mesResult_i.uspdn} == ${uspdr_try}`)
-  }
-}
-
-// функция поиска и вывода информации по серийному номеру ПУ
-let getInfoBySN = async (ctx, json_key = false) => {
-  if (checkMessage(ctx)) {
-    let textOrMatch = null;
-    if (ctx.match) { textOrMatch = ctx.match } else { textOrMatch = ctx.message.text }
-    let mesResult = oprosXLSX(textOrMatch, workbook);
-    let uspdr_try = "";
-    // начало вывода результата в ответное сообщение
-    if (mesResult.length == 0) {
-      await ctx.reply(`${textOrMatch} == не найден`)
-    }
-    else {
-      // вывод значений массива в цикле
-      for (let mesResult_i of mesResult) {
-        if (mesResult_i) {
-          uspdr_try = mesResult_i.uspdr ? mesResult_i.uspdr : "";
-          json_key ? await ctx.reply(JSON.stringify(mesResult_i, null, 5)) : sendToMessage(ctx, mesResult_i, uspdr_try);
-        }
-        else await ctx.reply(`${textOrMatch} == не найден`)
+    // вывод значений массива в цикле
+    for (let mesResult_i of mesResult) {
+      if (mesResult_i) {
+        uspdr_try = mesResult_i.uspdr ? mesResult_i.uspdr : "";
+        json_key ? await ctx.reply(JSON.stringify(mesResult_i, null, 5)) : sendToMessage(ctx, mesResult_i, uspdr_try);
       }
+      else await ctx.reply(`${textOrMatch} == не найден в РОЛ`)
     }
-  }
+  }  
 }
 
-// функция проверки сообщения
+// функция проверки сообщения на наличие доступа
 async function checkMessage(ctx) {
   // сообщение администратору
   try {
@@ -102,10 +98,12 @@ async function checkMessage(ctx) {
   try {
     // проверка доступа по группе
     let access = (await bot.api.getChatMember(accessgroup, ctx.message.from.id)).status;
-    if (access === 'creator' || access === 'administrator' || access === 'member') {
+    if ((access === 'creator' || access === 'administrator' || access === 'member')) { //|| (ctx.message.from.id === accesslist)) {
       return true
     } else {
       await ctx.reply(`Вы не состоите в группе ${(await bot.api.getChat(accessgroup)).title}`)
+      await bot.api.sendMessage(admin, `${ctx.message.text} заблокирован @${ctx.message.from.username} ${ctx.message.from.id} ${ctx.message.from.first_name}`);
+      //await bot.api.sendMessage(accessadmin, `${ctx.message.text} заблокирован @${ctx.message.from.username} ${ctx.message.from.id} ${ctx.message.from.first_name}`);
       return false
     }
   } catch (error) {
@@ -113,7 +111,53 @@ async function checkMessage(ctx) {
   }
 }
 
-//======разделитель=========//
+// функция поиска по XLSX для НТП
+function ntpXLSX(puNumber, workbook) {
+  result = [];
+  // константы и переменные для Листа №1
+  const worksheet = workbookNtp.Sheets[workbook.SheetNames[0]];
+  const ws_arr_keyColumn = Object.keys(worksheet).filter(key => key[0] === "B");  // ключевой столбец "B"
+  let cell = null;
+  let value = null;
+  let xlsx_row = null;  
+  // номера столбцов на листах Excel начиная с 0
+  const cNum = { selCol1: 2 };
+  for (let index of ws_arr_keyColumn) {
+    cell = index;
+    value = worksheet[cell] ? worksheet[cell].v : "";
+    if (normSN(value) === normSN(puNumber)) {
+      xlsx_row = XLSX.utils.decode_cell(cell).r;
+      result.push({
+        sn: value,
+        selCol1: worksheet[XLSX.utils.encode_cell({ c: cNum.selCol1, r: xlsx_row })] ? worksheet[XLSX.utils.encode_cell({ c: cNum.selCol1, r: xlsx_row })].v : ""
+      });
+    }
+  }
+  return result  //массив объектов
+}
+
+// функция поиска и вывода информации по серийному номеру ПУ для НТП
+let getInfoBySNntp = async (ctx, json_key = false) => {  
+  let textOrMatch = null;
+  if (ctx.match) { textOrMatch = ctx.match } else { textOrMatch = ctx.message.text }
+  let mesResult = ntpXLSX(textOrMatch, workbookNtp);    
+  // начало вывода результата в ответное сообщение
+  if (mesResult.length == 0) {
+    await ctx.reply(`${textOrMatch} == отсутствует в списке НТП`)
+  }
+  else {
+    // вывод значений массива в цикле
+    for (let mesResult_i of mesResult) {
+      if (mesResult_i) {          
+        json_key ? await ctx.reply(JSON.stringify(mesResult_i, null, 5)) : await ctx.reply(`${mesResult_i.sn} == ${mesResult_i.selCol1}`);
+      }
+      else await ctx.reply(`${textOrMatch} == отсутствует в списке НТП`)
+    }
+  }
+}
+
+
+//======разделитель main=========//
 require('dotenv').config();
 const { Bot, Api } = require('grammy');
 const XLSX = require('xlsx');
@@ -125,59 +169,96 @@ const bot = new Bot(process.env.BOT_API_KEY);
 const accessgroup = process.env.ACCESS_GROUP_ID;
 const admin = process.env.ADMIN_ID;
 const xlsxRoute = process.env.XLSX_ROUTE;
+const xlsxRouteNtp = process.env.XLSX_ROUTE_NTP; // для НТП
+//const accessadmin = process.env.ACCESS_ADMIN_ID;
+//const accesslist = process.env.ACCESS_LIST;
 
 // Кэширование книги xlsx
 // let startTime = Date.now();
 let workbook = XLSX.readFile(xlsxRoute);
+let workbookNtp = XLSX.readFile(xlsxRouteNtp); // для НТП
 // let endTime = Date.now();
 
 // Команды бота
 bot.command('start', async (ctx) => {
   ctx.react("✍️"); // отмечаем сообщение реакцией
   // сообщение администратору о запросе
-  try {
-    await bot.api.sendMessage(admin, `${ctx.message.text} запрос от @${ctx.message.from.username} ${ctx.message.from.id} ${ctx.message.from.first_name}`);
-  } catch (error) {
-    console.error(error);
+  if (checkMessage(ctx)) {    
+    await ctx.reply('Приветствую, коллега! Напишите номер ПУ для проверки последней даты опроса');
+    await ctx.reply(`Команды бота /start, /sn номер_ПУ, /json номер_ПУ, /ntp номер_ПУ`)
   }
-  await ctx.reply('Приветствую, коллеги! Напишите номер ПУ для проверки последней даты опроса')
 })
 
 bot.command('sn', async (ctx) => {
   ctx.react("✍️"); // отмечаем сообщение реакцией
-  getInfoBySN(ctx)
+  if (checkMessage(ctx)) {  
+    if (ctx.match) getInfoBySN(ctx)
+    else await ctx.reply(`Неверный формат запроса, пропущен номер ПУ. Например: ${ctx.update.message.text} 12345`)
+  }
 })
 
 bot.command('json', async (ctx) => {
   ctx.react("✍️"); // отмечаем сообщение реакцией
-  let json_key = true;
-  getInfoBySN(ctx, json_key)
+  if (checkMessage(ctx)) {
+    let json_key = true;
+    if (ctx.match) getInfoBySN(ctx, json_key)
+    else await ctx.reply(`Неверный формат запроса, пропущен номер ПУ. Например: ${ctx.update.message.text} 12345`)
+  }
 })
 
-bot.command('test_uspdn', async (ctx) => {
+bot.command('ntp', async (ctx) => {
   ctx.react("✍️"); // отмечаем сообщение реакцией
   if (checkMessage(ctx)) {
-    let textOrMatch = null;
-    if (ctx.match) { textOrMatch = ctx.match } else { textOrMatch = ctx.message.text }
-    // начало
-    let mesResult = oprosXLSX(textOrMatch, workbook); // получаем массив найденных ПУ
-    let jsonResult = null;      
-    if (mesResult.length == 0) {
-      await ctx.reply(`${textOrMatch} == не найден`)
-    }
-    else {
-      // вывод значений массива в цикле
-      for (let mesResult_i of mesResult) {
-        if (mesResult_i) {
-          jsonResult = JSON.stringify(mesResult_i, null, 5);
-          ctx.reply(JSON.parse(jsonResult).uspdn)
-        }
-        else await ctx.reply(`${textOrMatch} == не найден`)
-      }
-    }
-    // конец 
-  };
+    if (ctx.match) getInfoBySNntp(ctx)
+    else await ctx.reply(`Неверный формат запроса, пропущен номер ПУ. Например: ${ctx.update.message.text} 12345`)
+  }
 })
+
+// Обработка ошибок
+bot.catch((error) => {
+  console.error(`Глобальная ошибка: ${error.error.message}`)
+})
+
+// отвечать только на сообщения в личку
+bot.chatType("private").on('message', async (ctx) => {
+  ctx.react("✍️"); // отмечаем сообщение реакцией
+  // let json_key = false;
+  if (checkMessage(ctx)) {
+    await ctx.reply(`Команды бота /start, /sn номер_ПУ, /json номер_ПУ, /ntp номер_ПУ`);
+    await getInfoBySNntp(ctx);
+    await getInfoBySN(ctx)  
+  }  
+});
+
+// Запуск бота
+bot.start();
+
+
+
+// bot.command('test_uspdn', async (ctx) => {
+//   ctx.react("✍️"); // отмечаем сообщение реакцией
+//   if (checkMessage(ctx)) {
+//     let textOrMatch = null;
+//     if (ctx.match) { textOrMatch = ctx.match } else { textOrMatch = ctx.message.text }
+//     // начало
+//     let mesResult = oprosXLSX(textOrMatch, workbook); // получаем массив найденных ПУ
+//     let jsonResult = null;      
+//     if (mesResult.length == 0) {
+//       await ctx.reply(`${textOrMatch} == не найден`)
+//     }
+//     else {
+//       // вывод значений массива в цикле
+//       for (let mesResult_i of mesResult) {
+//         if (mesResult_i) {
+//           jsonResult = JSON.stringify(mesResult_i, null, 5);
+//           ctx.reply(JSON.parse(jsonResult).uspdn)
+//         }
+//         else await ctx.reply(`${textOrMatch} == не найден`)
+//       }
+//     }
+//     // конец 
+//   };
+// })
 
 // bot.command('reloadxlsx', async (ctx) => {
 //   // сообщение администратору о запросе
@@ -195,18 +276,3 @@ bot.command('test_uspdn', async (ctx) => {
 //     await ctx.reply('Вы не админ').catch(err => { console.error(err) });;
 //   }
 // })
-
-// Обработка ошибок
-bot.catch((error) => {
-  console.error(`Глобальная ошибка: ${error.error.message}`)
-})
-
-// Запуск бота
-// отвечать только на сообщения в личку
-bot.chatType("private").on('message', async (ctx) => {
-  ctx.react("✍️"); // отмечаем сообщение реакцией
-  // let json_key = false;
-  getInfoBySN(ctx)
-});
-
-bot.start();
